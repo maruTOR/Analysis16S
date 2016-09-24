@@ -1,5 +1,5 @@
 #! /Library/Frameworks/Python.framework/Versions/2.7/bin/python
-### ver 1.3 # date: 150123
+### ver 2.0 # date: 160924
 import numpy as np
 import os
 import sys
@@ -12,6 +12,7 @@ parser.add_argument("-o",dest="outf",action="store",type=str,default="none",help
 parser.add_argument("-threshold",dest="threshold",action="store",type=float,default=0.5,help="Threshold (0.5 is encouraged in manual)")
 parser.add_argument("-level",dest="level",action="store",type=str,default="Class",help="Taxonomic level (Default:Class)")
 parser.add_argument("-other",dest="other",action="store",type=float,default=1,help="Percentage")
+parser.add_argument("-otumat",dest="otumat",action="store",type=str,default="",help="OTU matrix")
 parser.add_argument("-undetermined_file",dest="undf",action="store",type=str,default="none",help="Path for file including sequence annotated as undtermined")
 parser.add_argument("-seq_file",dest="seqf",action="store",type=str,default="none",help="Path for sequence file. You have to input when you would like to extract undetermined sequence")
 args = parser.parse_args()
@@ -35,9 +36,7 @@ if not target in targets:
 	print 'Found something wrong in argument "level". you should input ' + "|".join(targets)
 	sys.exit() 
 
-##################
-# ReadFile
-##################
+# 
 file2sum = dict()
 file2others = dict()
 file2undetermined = dict()
@@ -46,32 +45,80 @@ fnames = []
 taxes = []
 undetermined_seq_ids = []
 tax2num = dict()
-for ii,jj in enumerate(fi):
-	data = jj.strip("\n").split("\t")
-	file = "_".join(data[0].split("_")[1:])
-	if not file in fnames: fnames.append(file)
-	if target in data:
-		index = data.index(target)
-		value = float(data[index+1])
-		tax = data[index-1].strip('"')
-		#
-		if value < args.threshold:
-			if file2undetermined.has_key(file): file2undetermined[file] += 1
-			else: file2undetermined[file] = 1
-			undetermined_seq_ids.append(data[0].strip(" "))
-		else:
-			if not tax in taxes: taxes.append(tax)
-			if file2tax2num.has_key(file):
-				if file2tax2num[file].has_key(tax): file2tax2num[file][tax] += 1
-				else: file2tax2num[file][tax] = 1
+########################
+# RDP with all sequence
+########################
+if args.otumat == "":
+	for ii,jj in enumerate(fi):
+		data = jj.strip("\n").split("\t")
+		file = "_".join(data[0].split("_")[1:])
+		if not file in fnames: fnames.append(file)
+		if target in data:
+			index = data.index(target)
+			value = float(data[index+1])
+			tax = data[index-1].strip('"')
+			#
+			if value < args.threshold:
+				if file2undetermined.has_key(file): file2undetermined[file] += 1
+				else: file2undetermined[file] = 1
+				undetermined_seq_ids.append(data[0].strip(" "))
 			else:
-				file2tax2num[file] = dict()
-				file2tax2num[file][tax] = 1
-for file in fnames:
-	if file2undetermined.has_key(file): file2sum[file] = np.sum(file2tax2num[file].values()) + file2undetermined[file]
-	else: file2sum[file] = np.sum(file2tax2num[file].values())
-fi.close()
-#
+				if not tax in taxes: taxes.append(tax)
+				if file2tax2num.has_key(file):
+					if file2tax2num[file].has_key(tax): file2tax2num[file][tax] += 1
+					else: file2tax2num[file][tax] = 1
+				else:
+					file2tax2num[file] = dict()
+					file2tax2num[file][tax] = 1
+	for file in fnames:
+		if file2undetermined.has_key(file): file2sum[file] = np.sum(file2tax2num[file].values()) + file2undetermined[file]
+		else: file2sum[file] = np.sum(file2tax2num[file].values())
+	fi.close()
+
+##########################
+# RDP with OTU represents
+##########################
+else:
+	# read otu matrix
+	file2otu2num = dict()
+	fi2 = open(args.otumat)
+	for ii,jj in enumerate(fi2):
+		data = jj.strip("\n").split("\t")
+		if ii == 0:
+			fnames = data[2:]
+			for fname in fnames: file2otu2num[fname] = dict()
+		else:
+			for i in range(2,len(data)):
+				file2otu2num[fnames[i-2]][data[1]] = float(data[i])
+	fi2.close()
+	# read RDP results
+	for ii,jj in enumerate(fi):
+		data = jj.strip("\n").split("\t")
+		if target in data:
+			otu = data[0]
+			index = data.index(target)
+			value = float(data[index+1])
+			tax = data[index-1].strip('"')
+			#
+			if value < args.threshold:
+				for file in fnames:
+					if file2undetermined.has_key(file): file2undetermined[file] += file2otu2num[file][otu] 
+					else: file2undetermined[file] = file2otu2num[file][otu]
+					undetermined_seq_ids.append(otu)
+			else:
+				if not tax in taxes: taxes.append(tax)
+				for file in fnames:
+					if file2tax2num.has_key(file):
+						if file2tax2num[file].has_key(tax): file2tax2num[file][tax] += file2otu2num[file][otu]
+						else: file2tax2num[file][tax] = file2otu2num[file][otu]
+					else:
+						file2tax2num[file] = dict()
+						file2tax2num[file][tax] = file2otu2num[file][otu]
+	for file in fnames:
+		if file2undetermined.has_key(file): file2sum[file] = np.sum(file2tax2num[file].values()) + file2undetermined[file]
+		else: file2sum[file] = np.sum(file2tax2num[file].values())
+	fi.close()
+
 
 ##################
 # tax2props
